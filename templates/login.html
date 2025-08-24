@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Secure Assessment - Login</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body class="bg-light">
+  <div class="container py-5">
+    <div class="row justify-c ontent-center">
+      <div class="col-12 col-md-6">
+        <div class="card shadow-lg rounded-4">
+          <div class="card-body p-4">
+            <h3 class="mb-3 text-center">Secure Assessment</h3>
+            <p class="text-center text-muted">Aptitude + Department Specific | Duration: {{ duration_min }} minutes</p>
+            {% if error %}
+            <div class="alert alert-danger">{{ error }}</div>
+            {% endif %}
+            <form method="POST" autocomplete="off">
+              <div class="mb-3">
+                <label class="form-label">Email (Username)</label>
+                <input type="text" class="form-control" id = "Username" name="Username" required placeholder="rollno@kamarajengg.edu.in" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Roll No (Password)</label>
+                <input type="password" class="form-control" id = "Password" name="Password" required placeholder="e.g., 22UCS113" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Department</label>
+                <select class="form-select" name="department" required>
+                  <option value="" selected disabled>Select Department</option>
+                  {% for d in departments %}
+                    <option value="{{ d }}">{{ d }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="d-grid">
+                <button class="btn btn-primary btn-lg rounded-4" type="submit">Start Assessment</button>
+              </div>
+            </form>
+            <hr class="my-4"/>
+            <p class="small text-muted">
+              Note: This assessment uses full-screen mode and disables copy/search operations. Do not refresh or switch apps during the test.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

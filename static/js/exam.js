@@ -1,13 +1,14 @@
 (function () {
   // ---- Config ----
   const MAX_VIOLATIONS = 5;
-  const VIOLATION_COOLDOWN_MS = 1500; // prevent double-count from blur+visibility
+  const VIOLATION_COOLDOWN_MS = 1500;
   const totalSec = (window.EXAM_DURATION_MIN || 90) * 60;
 
-  let remaining = totalSec;
-  let localViolations = 0;
-  let lastViolationAt = 0; // debounce timestamp
-  const answers = {};
+  // ---- Restore state from localStorage (for refresh / app switch) ----
+  let remaining = parseInt(localStorage.getItem("remainingTime") || totalSec);
+  let answers = JSON.parse(localStorage.getItem("answers") || "{}");
+  let localViolations = parseInt(localStorage.getItem("violations") || 0);
+  let lastViolationAt = 0;
 
   // ---- Elements ----
   const timerEl = document.getElementById("timer");
@@ -20,13 +21,22 @@
   function enterFS() {
     const elem = document.documentElement;
     if (elem.requestFullscreen) elem.requestFullscreen();
-    else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen();
-    else if (elem.msRequestFullscreen) elem.msRequestFullscreen();
+    else if (elem.webkitRequestFullscreen) elem.webkitRequestFullscreen(); // iOS Safari
+    else if (elem.msRequestFullscreen) elem.msRequestFullscreen(); // IE/Edge
+    else {
+      // fallback on mobiles that don’t support fullscreen
+      alert("⚠️ Please keep this page open. Leaving it will count as a violation.");
+    }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    setTimeout(enterFS, 300);
-    if (vioEl) vioEl.textContent = `Violations: 0 / ${MAX_VIOLATIONS}`;
+    setTimeout(enterFS, 500);
+    if (vioEl) vioEl.textContent = `Violations: ${localViolations} / ${MAX_VIOLATIONS}`;
+    // Restore checked answers after refresh
+    for (const [qid, val] of Object.entries(answers)) {
+      const el = document.querySelector(`input[name="${qid}"][value="${val}"]`);
+      if (el) el.checked = true;
+    }
   });
   if (goFS) goFS.addEventListener("click", enterFS);
 
@@ -40,25 +50,24 @@
   function updateTimer() {
     if (timerEl) timerEl.textContent = fmt(remaining);
     remaining--;
+    localStorage.setItem("remainingTime", remaining);
     if (remaining < 0) finalizeAndSubmit();
   }
   setInterval(updateTimer, 1000);
   updateTimer();
 
-    // ---- Capture answers (with incremental save) ----
-document.querySelectorAll('input[type="radio"]').forEach((inp) => {
-  inp.addEventListener("change", () => {
-    answers[inp.name] = inp.value; // name=QID, value=Option text
-
-    // ✅ Save latest answers to server immediately
-    fetch("/heartbeat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answers })
-    }).catch(() => {});
+  // ---- Capture answers (autosave) ----
+  document.querySelectorAll('input[type="radio"]').forEach((inp) => {
+    inp.addEventListener("change", () => {
+      answers[inp.name] = inp.value;
+      localStorage.setItem("answers", JSON.stringify(answers));
+      fetch("/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers, remaining })
+      }).catch(() => {});
+    });
   });
-});
-
 
   // ---- Anti-cheat restrictions ----
   document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -67,9 +76,7 @@ document.querySelectorAll('input[type="radio"]').forEach((inp) => {
     if ((e.ctrlKey || e.metaKey) && blocked.includes(e.key.toLowerCase())) {
       e.preventDefault();
     }
-    if (e.key === "PrintScreen" || e.key === "F12") {
-      e.preventDefault();
-    }
+    if (["PrintScreen", "F12"].includes(e.key)) e.preventDefault();
   });
   ["copy", "cut", "paste"].forEach((evt) =>
     document.addEventListener(evt, (e) => e.preventDefault())
@@ -78,7 +85,7 @@ document.querySelectorAll('input[type="radio"]').forEach((inp) => {
   // ---- Debounced violation trigger ----
   function triggerViolation(reason) {
     const now = Date.now();
-    if (now - lastViolationAt < VIOLATION_COOLDOWN_MS) return; // ignore duplicates
+    if (now - lastViolationAt < VIOLATION_COOLDOWN_MS) return;
     lastViolationAt = now;
     sendViolation(reason);
   }
@@ -86,13 +93,14 @@ document.querySelectorAll('input[type="radio"]').forEach((inp) => {
   // ---- Violation handling ----
   async function sendViolation(reason) {
     localViolations++;
+    localStorage.setItem("violations", localViolations);
+
     try {
       const res = await fetch("/violation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason })
       });
-      // Always try to read JSON even if status is 401/403/etc.
       const data = await res.json().catch(() => ({}));
       const serverCount =
         typeof data.violations === "number" ? data.violations : localViolations;
@@ -102,52 +110,39 @@ document.querySelectorAll('input[type="radio"]').forEach((inp) => {
       }
 
       if (serverCount > MAX_VIOLATIONS || data.status === "blocked") {
-        alert("❌ Too many violations. You are logged out.");
-        window.location.href = "/";
+        finalizeAndSubmit();
       }
-    } catch (e) {
-      // If server unreachable, still enforce locally
+    } catch {
       if (vioEl) {
         vioEl.textContent = `Warning: ${reason}. Violations: ${localViolations} / ${MAX_VIOLATIONS}`;
       }
-      if (localViolations > MAX_VIOLATIONS) {
-        window.location.href = "/";
-      }
+      if (localViolations > MAX_VIOLATIONS) finalizeAndSubmit();
     }
   }
 
-  // ---- Event hooks (use debounced triggerViolation) ----
+  // ---- Event hooks ----
   document.addEventListener("visibilitychange", () => {
-    // Fires when tab becomes hidden (switch tab / lock / app switch)
-    if (document.hidden) triggerViolation("Tab switch / Screen lock");
+    if (document.hidden) triggerViolation("Tab/App switch / Screen lock");
   });
-
-  window.addEventListener("blur", () => {
-    // Often fires together with visibilitychange; debounce prevents double count
-    triggerViolation("Window blur");
-  });
-
+  window.addEventListener("blur", () => triggerViolation("Window blur"));
   document.addEventListener("fullscreenchange", () => {
-    if (!document.fullscreenElement) {
-      triggerViolation("Exit fullscreen");
-    }
+    if (!document.fullscreenElement) triggerViolation("Exit fullscreen");
   });
 
-  // On unload / sleep (beacon doesn't increment UI, only persists best-effort)
-  window.addEventListener("pagehide", () => {
-    try {
-      const data = new Blob([JSON.stringify({ reason: "pagehide" })], { type: "application/json" });
-      navigator.sendBeacon("/violation-beacon", data);
-    } catch (e) {}
-  });
-  window.addEventListener("beforeunload", () => {
-    try {
-      const data = new Blob([JSON.stringify({ reason: "beforeunload" })], { type: "application/json" });
-      navigator.sendBeacon("/violation-beacon", data);
-    } catch (e) {}
+  // Mobile-safe page exit tracking
+  ["pagehide", "beforeunload"].forEach((evt) => {
+    window.addEventListener(evt, () => {
+      triggerViolation("Page reload / exit");
+      try {
+        const data = new Blob([JSON.stringify({ reason: evt })], {
+          type: "application/json",
+        });
+        navigator.sendBeacon("/violation-beacon", data);
+      } catch {}
+    });
   });
 
-  // Prevent back nav
+  // ---- Prevent back nav ----
   history.pushState(null, document.title, location.href);
   window.addEventListener("popstate", () => {
     history.pushState(null, document.title, location.href);
@@ -159,20 +154,26 @@ document.querySelectorAll('input[type="radio"]').forEach((inp) => {
       await fetch("/heartbeat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ remaining })
+        body: JSON.stringify({ answers, remaining })
       });
-    } catch (e) {}
+    } catch {}
   }
   setInterval(heartbeat, 10000);
 
   // ---- Submit ----
   function finalizeAndSubmit() {
     if (hiddenAnswers) hiddenAnswers.value = JSON.stringify(answers || {});
+    localStorage.removeItem("answers");
+    localStorage.removeItem("remainingTime");
+    localStorage.removeItem("violations");
     if (form) form.submit();
   }
   if (form) {
     form.addEventListener("submit", () => {
       if (hiddenAnswers) hiddenAnswers.value = JSON.stringify(answers || {});
+      localStorage.removeItem("answers");
+      localStorage.removeItem("remainingTime");
+      localStorage.removeItem("violations");
     });
   }
 })();

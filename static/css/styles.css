@@ -1,0 +1,31 @@
+body { -webkit-user-select: none; user-select: none; }
+.list-group {
+  display: flex;
+  flex-direction: column; /* stack items vertically */
+  align-items: center;    /* center horizontally */
+  justify-content: center;/* center vertically if container has height */
+}
+.list-group-item {
+  border: 1px solid rgba(0,0,0,0.08);
+  width: 50%;             /* control width of each item */
+  text-align: center;     /* center content inside */
+}
+ #timer { 
+  letter-spacing: 1px; 
+  text-align: center;     /* center timer text */
+  display: block;
+  margin: 10px auto;      /* ensures centered alignment */
+}
+
+@media (min-width: 992px) {
+  #examForm button[type=submit] {
+    width: 40% !important;
+    margin: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .list-group-item {
+    width: 95% !important;
+  }
+}
